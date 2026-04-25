@@ -2,6 +2,14 @@
 
 ボスバトル型のブロック崩しゲーム。面ごとに異なるボスと戦う、Breakout オマージュ。HTML5 Canvas + TypeScript + Vite で実装。
 
+## プレイ
+
+**▶ <https://pierre3.github.io/bash-out/>**
+
+スマホからは下のQRコードを読み込んでアクセスできます。
+
+![QRコード](qr.png)
+
 ## 概要
 
 - 画面右上の**ボス**に攻撃を加え、HPをゼロにすると勝利
