@@ -1,6 +1,6 @@
 # BashOut
 
-ボスバトル型のブロック崩しゲーム。面ごとに異なるボスと戦う、Breakout オマージュ。HTML5 Canvas + TypeScript + Vite で実装。
+ボスバトル型のブロック崩しゲーム。面ごとに異なるボスと戦うブラウザゲーム
 
 ## プレイ
 
@@ -12,10 +12,21 @@
 
 ## 概要
 
-- 画面右上の**ボス**に攻撃を加え、HPをゼロにすると勝利
+- 画面右上の**ボス**にボールを当ててHPをゼロにすると勝利
+- ブロックは「ボスを守る盾」。破壊しても直接ダメージにはならず、ボスへの攻撃路を開くために壊す
 - 面ごとに異なるボスが登場（現状は猪ボス1種）
 - ボスは時間経過でブロックを叩き落とす（ボディアタック）、電撃でパドルを麻痺、ボールを加速、ブロックを強化（岩化）の4種の攻撃を仕掛けてくる
 - プレイヤーはチャージでエネルギーを溜め、3種の基本技（パドル拡大 / ボール分裂 / バリア）と、★3つで発動する必殺技「貫通弾」で対抗する
+
+### ダメージ仕様
+
+| 攻撃 | ボスへのダメージ |
+|------|------------------|
+| ブロック破壊 | 0（ブロックは盾） |
+| ボールがボスに直撃 | 3 |
+| 必殺技弾がボスに直撃 | 25（HPの約4割） |
+
+ボスHPは60。必殺技弾はブロックをHP無視で貫通破壊しつつボスに直撃させると大ダメージなので、列を貫通させる射線狙いが鍵。ボディアタック中はボスがプレイ領域に降りてくるため、判定もそれに追従しヒットチャンスが生まれる。
 
 ## 操作
 
@@ -55,56 +66,6 @@ npm run build
 ## 仕様書
 
 設計・実装方針は [spec.md](spec.md) にまとめている。
-
-## GitHub Pages への公開
-
-`vite.config.ts` で `base: './'` を指定済みのため、サブパス配信（`https://USER.github.io/REPO/`）でも動作する。
-
-### 手動デプロイ
-
-```bash
-npm run build
-# dist/ の中身を gh-pages ブランチに push する
-```
-
-### GitHub Actions による自動デプロイ
-
-`.github/workflows/deploy.yml` を作成して以下のような内容を置けば、main ブランチへの push で自動的に Pages にデプロイできる:
-
-```yaml
-name: Deploy to GitHub Pages
-on:
-  push:
-    branches: [main]
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - run: npm ci
-      - run: npm run build
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
-```
-
-リポジトリの **Settings → Pages → Source** を **GitHub Actions** に設定すること。
 
 ## 技術スタック
 

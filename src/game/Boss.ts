@@ -61,9 +61,24 @@ export class Boss {
   /** ボディアタックの着地（=ブロック追加発火）が今回の攻撃で済んだか */
   private slamImpactFired = false;
 
-  constructor(maxHp = 80) {
+  constructor(maxHp = 60) {
     this.maxHp = maxHp;
     this.hp = maxHp;
+  }
+
+  /**
+   * ボールや必殺技弾の衝突判定用の AABB。
+   * ボディアタック中は slamOffsetY で位置が下がり、
+   * プレイ領域に降りてきた瞬間にボールが当たる隙が生まれる。
+   */
+  get collisionRect(): { x: number; y: number; width: number; height: number } {
+    const slamY = this.computeSlamOffsetY();
+    return {
+      x: this.bossX,
+      y: this.bossY + slamY,
+      width: this.bossW,
+      height: this.bossH,
+    };
   }
 
   /** 現在の攻撃種別（telegraph/active/cooldown中のみ有効） */

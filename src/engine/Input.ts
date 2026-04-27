@@ -14,6 +14,8 @@ export class Input {
   private lastFreshPress: Record<string, number> = {};
   private boostTrigger: BoostDirection | null = null;
   private pointerDownPos: { x: number; y: number } | null = null;
+  /** このフレーム内にポインタ押下イベントが発生したか（タップ位置に関わらず true） */
+  private anyPointerDown = false;
   /** 仮想ボタンを押している pointer ID 一覧（マルチタッチ対応） */
   private leftPointerIds = new Set<number>();
   private rightPointerIds = new Set<number>();
@@ -39,6 +41,9 @@ export class Input {
     // タップ・クリックを論理座標に変換して、仮想ボタン → スキル吹き出しなどへ振り分け
     canvas.addEventListener('pointerdown', (e) => {
       const pos = this.toLogicalCoords(canvas, e);
+
+      // ゲームオーバー時の再スタートなど、振り分けに関係なく「押された」ことを検出するためのフラグ
+      this.anyPointerDown = true;
 
       // 仮想方向ボタンに当たれば、そちらを優先処理（pointerDownPos には記録しない）
       if (Input.inRect(pos, TOUCH_LEFT_BUTTON)) {
@@ -105,6 +110,7 @@ export class Input {
     this.prevKeys = new Set(this.keys);
     this.boostTrigger = null;
     this.pointerDownPos = null;
+    this.anyPointerDown = false;
   }
 
   isKeyDown(code: string): boolean {
@@ -136,6 +142,9 @@ export class Input {
 
   isLeftButtonHeld(): boolean { return this.leftPointerIds.size > 0; }
   isRightButtonHeld(): boolean { return this.rightPointerIds.size > 0; }
+
+  /** このフレームでポインタ押下があったか（位置・対象問わず）。ゲームオーバー時のリスタート判定などに使う */
+  hasFreshPointerDown(): boolean { return this.anyPointerDown; }
 
   isSkillActivate(): boolean {
     return this.isKeyPressed('ArrowUp');

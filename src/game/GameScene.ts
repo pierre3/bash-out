@@ -29,7 +29,8 @@ const STARS_REQUIRED = 3;             // 必殺技発動に必要な★数
 
 const INITIAL_LIVES = 3;              // ライフ機数
 const REACH_LINE_OFFSET = 30;         // パドル上端から何px上を到達ラインにするか
-const BLOCK_DAMAGE = 1;               // ブロック1個破壊で敵HPに与えるダメージ
+const BALL_HIT_DAMAGE = 3;            // ボールがボスにヒットした時のダメージ
+const ULT_HIT_DAMAGE = 25;            // 必殺技弾がボスにヒットした時のダメージ
 
 // 敵の攻撃パラメータ
 const STUN_DURATION = 1.0;            // 電撃: パドル停止秒数
@@ -69,6 +70,7 @@ export class GameScene extends Scene {
   private ultChargeTimer = 0;
   private ultBulletX = 0;
   private ultBulletY = 0;                 // 弾の上端y
+  private ultBossHit = false;             // 同一発射でボスに既にヒットしたか
   /** draw 時に HUD のタッチボタン描画で使うため、最後の update の Input を保持 */
   private lastInput: Input | null = null;
   private hud = new HUD();
@@ -146,7 +148,8 @@ export class GameScene extends Scene {
     if (this.canvasWidth === 0) return;
 
     if (this.gameOver || this.cleared) {
-      if (input.isSkillActivate()) {
+      // ↑キー or 画面のどこかをタップ/クリックで再スタート
+      if (input.isSkillActivate() || input.hasFreshPointerDown()) {
         this.init(this.canvasWidth, this.canvasHeight);
       }
       return;
@@ -345,9 +348,14 @@ export class GameScene extends Scene {
     this.ultBulletX = this.paddle.x + this.paddle.width / 2;
     // 弾の下端がパドル上端から出る形で開始
     this.ultBulletY = this.paddle.y - ULT_BULLET_HEIGHT;
+    this.ultBossHit = false;
   }
 
-  /** 貫通弾と現在のブロック群の衝突判定（HP無視で破壊） */
+  /**
+   * 貫通弾の衝突判定。
+   *  - 通過するブロックは HP無視で全て破壊（ボスHPは減らさない）
+   *  - ボスに当たったら大ダメージ（同じ発射中は1回まで）。弾はそのまま画面外まで貫通
+   */
   private checkUltBulletCollisions(): void {
     const left = this.ultBulletX - ULT_BULLET_WIDTH / 2;
     const right = this.ultBulletX + ULT_BULLET_WIDTH / 2;
@@ -360,15 +368,24 @@ export class GameScene extends Scene {
                 && bottom > b.y && top < b.y + b.height;
       if (!hit) continue;
 
-      // HPに関係なく破壊
       b.hp = 0;
       b.active = false;
-      this.boss.damage(BLOCK_DAMAGE);
       if (b.hasStar) {
         this.stars.push(new StarItem(
           b.x + b.width / 2,
           b.y + b.height / 2,
         ));
+      }
+    }
+
+    // ボス本体への直撃（1発につき1回まで）
+    if (!this.ultBossHit && !this.boss.isDead) {
+      const bossRect = this.boss.collisionRect;
+      const overlap = right > bossRect.x && left < bossRect.x + bossRect.width
+                   && bottom > bossRect.y && top < bossRect.y + bossRect.height;
+      if (overlap) {
+        this.boss.damage(ULT_HIT_DAMAGE);
+        this.ultBossHit = true;
       }
     }
   }
@@ -425,7 +442,26 @@ export class GameScene extends Scene {
         }
       }
 
-      // ボール vs ブロック
+      // ボール vs ボス（ブロックより先にチェック。ボスはブロック群の上方にいるため
+      // 通常は衝突対象が重ならないが、ボディアタック中は降りてくるので順序を明示）
+      if (!this.boss.isDead) {
+        const bossRect = this.boss.collisionRect;
+        const bossResult = checkCircleAABB(ball.cx, ball.cy, ball.radius, bossRect);
+        if (bossResult.hit) {
+          this.boss.damage(BALL_HIT_DAMAGE);
+          // 単純反射（壁と同じ。曲面反射はパドルのみ）
+          if (Math.abs(bossResult.nx) > Math.abs(bossResult.ny)) {
+            ball.vx = Math.abs(ball.vx) * bossResult.nx;
+          } else {
+            ball.vy = Math.abs(ball.vy) * bossResult.ny;
+          }
+          ball.x += bossResult.nx * bossResult.overlap;
+          ball.y += bossResult.ny * bossResult.overlap;
+          continue; // 同フレームでブロック判定はスキップ（既に押し戻し済み）
+        }
+      }
+
+      // ボール vs ブロック（破壊しても直接ボスHPは減らない。★ドロップは継続）
       for (const block of this.blocks) {
         if (!block.active) continue;
         const result = checkCircleAABB(
@@ -433,15 +469,11 @@ export class GameScene extends Scene {
         );
         if (result.hit) {
           block.hit();
-          // 破壊した瞬間にボスにダメージ + ★ドロップ
-          if (!block.active) {
-            this.boss.damage(BLOCK_DAMAGE);
-            if (block.hasStar) {
-              this.stars.push(new StarItem(
-                block.x + block.width / 2,
-                block.y + block.height / 2,
-              ));
-            }
+          if (!block.active && block.hasStar) {
+            this.stars.push(new StarItem(
+              block.x + block.width / 2,
+              block.y + block.height / 2,
+            ));
           }
           if (Math.abs(result.nx) > Math.abs(result.ny)) {
             ball.vx = Math.abs(ball.vx) * result.nx;
@@ -537,11 +569,11 @@ export class GameScene extends Scene {
     // ゲームオーバー / クリア表示
     if (this.gameOver) {
       renderer.drawText('GAME OVER', renderer.width / 2 - 70, renderer.height / 2, '#ff4444', '28px monospace');
-      renderer.drawText('Press ↑ to restart', renderer.width / 2 - 90, renderer.height / 2 + 40, '#888', '16px monospace');
+      renderer.drawText('Tap or press ↑ to restart', renderer.width / 2 - 110, renderer.height / 2 + 40, '#888', '16px monospace');
     }
     if (this.cleared) {
       renderer.drawText('YOU WIN!', renderer.width / 2 - 60, renderer.height / 2, '#44ff44', '28px monospace');
-      renderer.drawText('Press ↑ to restart', renderer.width / 2 - 90, renderer.height / 2 + 40, '#888', '16px monospace');
+      renderer.drawText('Tap or press ↑ to restart', renderer.width / 2 - 110, renderer.height / 2 + 40, '#888', '16px monospace');
     }
   }
 
