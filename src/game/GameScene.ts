@@ -259,8 +259,8 @@ export class GameScene extends Scene {
         for (const b of this.reinforceTargets) b.reinforce();
         break;
       case 'bodySlam':
-        // 着地タイミングで Boss 側から通知される。新しい段を最上段に追加し既存を下にずらす
-        this.spawnBlockRowFromTop();
+        // 着地タイミングで Boss 側から通知される。怒り中は3段、通常は1段追加
+        this.spawnBlockRows(this.boss.slamRowCount);
         break;
     }
   }
@@ -281,12 +281,17 @@ export class GameScene extends Scene {
     return shuffled.slice(0, count);
   }
 
-  /** 既存ブロック群を1段下にずらし、最上段に新しい段を追加する */
-  private spawnBlockRowFromTop(): void {
+  /** 既存ブロック群を count 段下にずらし、最上段から新しい段を count 個追加する */
+  private spawnBlockRows(count: number): void {
+    if (count < 1) return;
+    const totalShift = count * BLOCK_ROW_PITCH;
     for (const b of this.blocks) {
-      if (b.active) b.y += BLOCK_ROW_PITCH;
+      if (b.active) b.y += totalShift;
     }
-    this.blocks.push(...this.createBlockRow(this.canvasWidth, this.blockTopOffset));
+    for (let i = 0; i < count; i++) {
+      const y = this.blockTopOffset + i * BLOCK_ROW_PITCH;
+      this.blocks.push(...this.createBlockRow(this.canvasWidth, y));
+    }
   }
 
   private updateStars(dt: number): void {

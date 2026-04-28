@@ -15,6 +15,11 @@ const HP_BAR_GAP_FROM_BOSS = 12;
 const HIT_FLASH_DURATION = 0.2;
 const HIT_RECOIL_DURATION = 0.25;
 
+// 怒り状態のしきい値・演出
+const RAGE_HP_RATIO = 0.25;          // HPがこの割合以下で怒り突入
+const RAGE_ACTIVATION_FLASH = 0.6;   // 突入時の赤バースト持続時間（秒）
+const RAGE_SLAM_ROW_COUNT = 3;       // 怒り中のボディアタック1回で追加されるブロック段数
+
 // 攻撃タイミング
 const TELEGRAPH_DURATION = 1.5;
 const ACTIVE_DURATION: Record<AttackKind, number> = {
@@ -51,6 +56,10 @@ export class Boss {
   private idleTime = 0;
   private hitFlash = 0;
   private hitRecoil = 0;
+  /** 怒り状態（一度入ったら戻らない） */
+  private enraged = false;
+  /** 怒り突入時の赤バースト残り時間 */
+  private rageActivationTimer = 0;
 
   // 攻撃ステートマシン
   private phase: AttackPhase = 'idle';
@@ -165,12 +174,30 @@ export class Boss {
     this.hp = Math.max(0, this.hp - amount);
     this.hitFlash = HIT_FLASH_DURATION;
     this.hitRecoil = HIT_RECOIL_DURATION;
+
+    // HPが閾値を下回ったら怒り突入。一度きりのバースト演出を発火
+    if (!this.enraged && !this.isDead && this.hpRatio <= RAGE_HP_RATIO) {
+      this.enraged = true;
+      this.rageActivationTimer = RAGE_ACTIVATION_FLASH;
+    }
+  }
+
+  get isEnraged(): boolean {
+    return this.enraged;
+  }
+
+  /** ボディアタック1回で追加するブロック段数（怒り中は増える） */
+  get slamRowCount(): number {
+    return this.enraged ? RAGE_SLAM_ROW_COUNT : 1;
   }
 
   update(dt: number): void {
     this.idleTime += dt;
     if (this.hitFlash > 0) this.hitFlash = Math.max(0, this.hitFlash - dt);
     if (this.hitRecoil > 0) this.hitRecoil = Math.max(0, this.hitRecoil - dt);
+    if (this.rageActivationTimer > 0) {
+      this.rageActivationTimer = Math.max(0, this.rageActivationTimer - dt);
+    }
 
     if (this.isDead) {
       this.phase = 'idle';
@@ -424,6 +451,7 @@ export class Boss {
 
   /** 攻撃状態に応じた目の色 */
   private currentEyeColor(): string {
+    // 攻撃中の特殊色は最優先
     if (this.attackKind === 'lightning' && this.phase !== 'idle') {
       // 雷予兆: 黄色く強く光る（点滅）
       const flicker = 0.7 + Math.sin(this.idleTime * 28) * 0.3;
@@ -431,6 +459,11 @@ export class Boss {
     }
     if (this.attackKind === 'reinforce' && this.phase !== 'idle') {
       return '#ff3333';
+    }
+    // 怒り中は常時赤く脈動
+    if (this.enraged) {
+      const flicker = 0.85 + Math.sin(this.idleTime * 8) * 0.15;
+      return `rgba(255, 60, 60, ${flicker.toFixed(3)})`;
     }
     return '#ffeb3b';
   }
@@ -444,7 +477,10 @@ export class Boss {
       ? Math.sin((1 - this.hitRecoil / HIT_RECOIL_DURATION) * Math.PI) * 6
       : 0;
 
-    const idleBounce = Math.sin(this.idleTime * 2.2) * 1.5;
+    // 怒り中はアイドルバウンドが速く・大きくなる（呼吸が荒く見える）
+    const bounceSpeed = this.enraged ? 3.5 : 2.2;
+    const bounceAmp = this.enraged ? 2.5 : 1.5;
+    const idleBounce = Math.sin(this.idleTime * bounceSpeed) * bounceAmp;
     const slamOffsetY = this.computeSlamOffsetY();
     const slamScale = this.computeSlamScale();
     const cx = this.bossX + this.bossW / 2 + recoilX;
@@ -509,10 +545,38 @@ export class Boss {
       ctx.fillRect(this.bossX - 10, this.bossY - 10, this.bossW + 20, this.bossH + 20);
       ctx.restore();
     }
+
+    // 怒り突入時の赤バースト（一度きり）
+    if (this.rageActivationTimer > 0) {
+      const t = this.rageActivationTimer / RAGE_ACTIVATION_FLASH; // 1→0
+      // 全身に赤オーバーレイ + 外側に放射
+      ctx.save();
+      ctx.globalCompositeOperation = 'source-atop';
+      ctx.fillStyle = `rgba(255, 60, 60, ${(t * 0.7).toFixed(3)})`;
+      ctx.fillRect(this.bossX - 10, this.bossY - 10, this.bossW + 20, this.bossH + 20);
+      ctx.restore();
+
+      const burstRadius = w * (0.4 + (1 - t) * 0.6);
+      const grad = ctx.createRadialGradient(cx, cy, w * 0.2, cx, cy, burstRadius);
+      grad.addColorStop(0, `rgba(255, 80, 80, ${(t * 0.45).toFixed(3)})`);
+      grad.addColorStop(1, 'rgba(255, 80, 80, 0)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(cx - burstRadius, cy - burstRadius, burstRadius * 2, burstRadius * 2);
+    }
   }
 
-  /** 攻撃予兆中の全身オーラ（雷=黄、reinforce=赤） */
+  /** 攻撃予兆中の全身オーラ（雷=黄、reinforce=赤）+ 怒り中の常時赤オーラ */
   private drawAttackAura(ctx: CanvasRenderingContext2D, cx: number, cy: number, w: number, _h: number): void {
+    // 怒り中は常時の赤い薄オーラ（攻撃中でなくても出る）
+    if (this.enraged) {
+      const pulse = 0.85 + Math.sin(this.idleTime * 4) * 0.15;
+      const grad = ctx.createRadialGradient(cx, cy, w * 0.18, cx, cy, w * 0.62);
+      grad.addColorStop(0, `rgba(255, 60, 60, ${(0.18 * pulse).toFixed(3)})`);
+      grad.addColorStop(1, 'rgba(255, 60, 60, 0)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(this.bossX - 40, this.bossY - 40, this.bossW + 80, this.bossH + 80);
+    }
+
     if (this.phase === 'idle') return;
     let color: [number, number, number] | null = null;
     if (this.attackKind === 'lightning') color = [255, 230, 80];
