@@ -1,60 +1,98 @@
-import { GameObject } from '../engine/GameObject';
 import type { Renderer } from '../engine/Renderer';
 
-const BARRIER_HEIGHT = 6;
+const MEMBRANE_HEIGHT = 5;            // ブロック高さ20の約1/4
+const MEMBRANE_COLS = 8;
+const MEMBRANE_SIDE_PADDING = 10;
+const MEMBRANE_GAP_FROM_PADDLE = 16;  // 膜の下端からパドル上端までの距離
 
-export class Barrier extends GameObject {
-  private timer = 0;
-  private duration = 0;
+export interface Membrane {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  active: boolean;
+}
 
-  constructor(canvasWidth: number, canvasHeight: number) {
-    super(0, canvasHeight - 10, canvasWidth, BARRIER_HEIGHT);
-    this.active = false;
+/**
+ * バリア。パドル上に薄い透明膜が一列に並ぶ防御スキル。
+ *  - ボールに当たると膜が1個ずつ破壊される
+ *  - 時間で消えない。全部破壊されるまで残る
+ *  - 再発動で全列リセット
+ */
+export class Barrier {
+  private membranes: Membrane[] = [];
+  private canvasWidth: number;
+
+  constructor(canvasWidth: number, _canvasHeight: number) {
+    this.canvasWidth = canvasWidth;
   }
 
-  activate(duration: number): void {
-    this.timer = duration;
-    this.duration = duration;
-    this.active = true;
-  }
-
-  update(dt: number): void {
-    if (!this.active) return;
-    this.timer -= dt;
-    if (this.timer <= 0) {
-      this.timer = 0;
-      this.active = false;
+  /** 指定したパドル上端 y を基準に膜を一列展開（既存は置き換え） */
+  activate(paddleY: number): void {
+    this.membranes = [];
+    const totalWidth = this.canvasWidth - MEMBRANE_SIDE_PADDING * 2;
+    const w = totalWidth / MEMBRANE_COLS;
+    const y = paddleY - MEMBRANE_GAP_FROM_PADDLE - MEMBRANE_HEIGHT;
+    for (let i = 0; i < MEMBRANE_COLS; i++) {
+      this.membranes.push({
+        x: MEMBRANE_SIDE_PADDING + i * w,
+        y,
+        width: w,
+        height: MEMBRANE_HEIGHT,
+        active: true,
+      });
     }
   }
 
-  /** 残り時間の割合（0〜1）。フェードアウト表現などに使う */
-  get remainingRatio(): number {
-    return this.duration > 0 ? this.timer / this.duration : 0;
+  /** 1つでも生きている膜があれば true（全破壊されるまで active） */
+  get active(): boolean {
+    for (const m of this.membranes) if (m.active) return true;
+    return false;
+  }
+
+  /** 衝突判定対象の膜配列。caller は !active をスキップする想定 */
+  getMembranes(): readonly Membrane[] {
+    return this.membranes;
+  }
+
+  update(_dt: number): void {
+    // 時間で消えないので何もしない
   }
 
   draw(renderer: Renderer): void {
-    if (!this.active) return;
     const ctx = renderer.ctx;
-    // 点滅効果（残り時間が少ないほど速い）
-    const alpha = 0.55 + 0.35 * Math.sin(this.timer * 10);
-    const r = this.height / 2; // カプセル形
+    for (const m of this.membranes) {
+      if (!m.active) continue;
+      this.drawMembrane(ctx, m);
+    }
+  }
 
-    // 外側のソフトグロー
-    ctx.fillStyle = `rgba(100, 200, 255, ${(alpha * 0.35).toFixed(3)})`;
+  private drawMembrane(ctx: CanvasRenderingContext2D, m: Membrane): void {
+    // 周囲の薄いグロー（膜を浮かせる）
+    ctx.fillStyle = 'rgba(150, 220, 255, 0.18)';
     ctx.beginPath();
-    ctx.roundRect(this.x - 4, this.y - 3, this.width + 8, this.height + 6, r + 3);
+    ctx.roundRect(m.x - 1.5, m.y - 1.5, m.width + 3, m.height + 3, 3);
     ctx.fill();
 
-    // 本体
-    ctx.fillStyle = `rgba(100, 200, 255, ${alpha.toFixed(3)})`;
+    // 本体: 透明感のある縦グラデ
+    const grad = ctx.createLinearGradient(0, m.y, 0, m.y + m.height);
+    grad.addColorStop(0, 'rgba(225, 245, 255, 0.70)');
+    grad.addColorStop(0.5, 'rgba(150, 220, 255, 0.42)');
+    grad.addColorStop(1, 'rgba(100, 200, 255, 0.55)');
+    ctx.fillStyle = grad;
     ctx.beginPath();
-    ctx.roundRect(this.x, this.y, this.width, this.height, r);
+    ctx.roundRect(m.x, m.y, m.width, m.height, 2.5);
     ctx.fill();
 
-    // 内側ハイライト
-    ctx.fillStyle = `rgba(220, 240, 255, ${(alpha * 0.7).toFixed(3)})`;
+    // 上部のハイライト（ガラスっぽい光沢）
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.65)';
+    ctx.fillRect(m.x + 2, m.y + 0.8, m.width - 4, 0.8);
+
+    // 縁
+    ctx.strokeStyle = 'rgba(190, 235, 255, 0.55)';
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.roundRect(this.x + 2, this.y + 1, this.width - 4, this.height * 0.35, r);
-    ctx.fill();
+    ctx.roundRect(m.x, m.y, m.width, m.height, 2.5);
+    ctx.stroke();
   }
 }

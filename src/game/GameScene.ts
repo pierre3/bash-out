@@ -20,7 +20,6 @@ const BLOCK_TOP_GAP_FROM_BOSS = 8;    // ボス下端からブロック上端ま
 const BLOCK_SIDE_PADDING = 10;
 
 const PADDLE_EXPAND_DURATION = 8;     // 秒
-const BARRIER_DURATION = 8;           // 秒
 const MAX_BALLS = 8;                  // 分裂上限
 const SPLIT_SPREAD_ANGLE = Math.PI / 12; // 分裂時の角度差
 
@@ -401,19 +400,12 @@ export class GameScene extends Scene {
   }
 
   private handleBallFalls(): void {
+    // バリア（膜）は handleCollisions で処理されるため、ここでは画面外に落ちたボールを消すだけ
     const remainingBalls: Ball[] = [];
     for (const ball of this.balls) {
       if (!ball.isBelowScreen(this.canvasHeight)) {
         remainingBalls.push(ball);
-        continue;
       }
-      // バリアが有効ならボールを跳ね返す
-      if (this.barrier.active) {
-        ball.y = this.barrier.y - ball.height;
-        ball.vy = -Math.abs(ball.vy);
-        remainingBalls.push(ball);
-      }
-      // バリアなしの場合はボールを消す（落下）
     }
     this.balls = remainingBalls;
 
@@ -495,6 +487,20 @@ export class GameScene extends Scene {
           break;
         }
       }
+
+      // ボール vs バリア膜（上→下方向のみ反射、上方向は通過）
+      // ny < 0 はボール中心が膜の上側にいる場合 → 上から落ちてきた当たりに限定
+      for (const m of this.barrier.getMembranes()) {
+        if (!m.active) continue;
+        const r = checkCircleAABB(ball.cx, ball.cy, ball.radius, m);
+        if (r.hit && ball.vy > 0 && r.ny < 0) {
+          m.active = false;
+          ball.vy = -Math.abs(ball.vy);
+          ball.x += r.nx * r.overlap;
+          ball.y += r.ny * r.overlap;
+          break;
+        }
+      }
     }
   }
 
@@ -509,8 +515,8 @@ export class GameScene extends Scene {
         this.splitBalls();
         break;
       case 3:
-        // バリア
-        this.barrier.activate(BARRIER_DURATION);
+        // バリア: パドル直上に膜を一列展開（既存膜は置き換え）
+        this.barrier.activate(this.paddle.y);
         break;
     }
   }
