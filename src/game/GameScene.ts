@@ -86,23 +86,28 @@ export class GameScene extends Scene {
   private init(width: number, height: number): void {
     this.canvasWidth = width;
     this.canvasHeight = height;
-    this.paddle = new Paddle(width, height);
-    this.balls = [this.spawnBallOnPaddle()];
-    this.barrier = new Barrier(width, height);
-    this.stars = [];
+
+    // 1) 先に全フィールドの状態をリセット（spawnBallOnPaddle が
+    //    cumulativeBallBoost を参照するため、ボール生成より前に 0 にしておく必要がある）
+    this.cumulativeBallBoost = 0;
+    this.ultPhase = 'idle';
+    this.ultChargeTimer = 0;
+    this.lives = INITIAL_LIVES;
+    this.reinforceTargets = [];
     this.starsCollected = 0;
+    this.stars = [];
+    this.gameOver = false;
+    this.cleared = false;
+
+    // 2) ゲームオブジェクトを生成
     this.energy = new EnergySystem();
+    this.paddle = new Paddle(width, height);
+    this.barrier = new Barrier(width, height);
     this.boss = new Boss();
     this.boss.setLayout(width);
     this.blockTopOffset = this.boss.bottomY + BLOCK_TOP_GAP_FROM_BOSS;
     this.blocks = this.createInitialBlocks(width);
-    this.lives = INITIAL_LIVES;
-    this.reinforceTargets = [];
-    this.cumulativeBallBoost = 0;
-    this.ultPhase = 'idle';
-    this.ultChargeTimer = 0;
-    this.gameOver = false;
-    this.cleared = false;
+    this.balls = [this.spawnBallOnPaddle()];
   }
 
   private spawnBallOnPaddle(): Ball {
