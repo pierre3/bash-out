@@ -10,6 +10,7 @@ import { StarItem } from './StarItem';
 import { Boss, type AttackKind } from './Boss';
 import { EnergySystem } from './EnergySystem';
 import { HUD } from '../ui/HUD';
+import type { SoundEngine, SoundHandle } from '../engine/SoundEngine';
 
 const BLOCK_ROWS = 3;                 // 初期段数（追加で下にずれていく前提で薄め）
 const BLOCK_COLS = 8;
@@ -72,7 +73,19 @@ export class GameScene extends Scene {
   private ultBossHit = false;             // 同一発射でボスに既にヒットしたか
   /** draw 時に HUD のタッチボタン描画で使うため、最後の update の Input を保持 */
   private lastInput: Input | null = null;
+  private readonly sound: SoundEngine;
+  /** 必殺技チャージの持続音ハンドル（途中停止に使う） */
+  private ultChargeSound: SoundHandle | null = null;
+  /** 怒り状態の遷移検出用 */
+  private lastEnraged = false;
+  /** ゲームオーバー/クリア時の効果音を1度だけ鳴らすためのフラグ */
+  private endingSoundPlayed = false;
   private hud = new HUD();
+
+  constructor(sound: SoundEngine) {
+    super();
+    this.sound = sound;
+  }
   private canvasWidth = 0;
   private canvasHeight = 0;
   private gameOver = false;
@@ -91,6 +104,10 @@ export class GameScene extends Scene {
     this.cumulativeBallBoost = 0;
     this.ultPhase = 'idle';
     this.ultChargeTimer = 0;
+    this.ultChargeSound?.stop();
+    this.ultChargeSound = null;
+    this.lastEnraged = false;
+    this.endingSoundPlayed = false;
     this.lives = INITIAL_LIVES;
     this.reinforceTargets = [];
     this.starsCollected = 0;
@@ -152,11 +169,24 @@ export class GameScene extends Scene {
     if (this.canvasWidth === 0) return;
 
     if (this.gameOver || this.cleared) {
+      // 状態遷移直後の1フレーム目にエンディングSFXを1度だけ鳴らす
+      if (!this.endingSoundPlayed) {
+        this.endingSoundPlayed = true;
+        this.ultChargeSound?.stop();
+        this.ultChargeSound = null;
+        if (this.cleared) this.sound.win();
+        else this.sound.gameOver();
+      }
       // ↑キー or 画面のどこかをタップ/クリックで再スタート
       if (input.isSkillActivate() || input.hasFreshPointerDown()) {
         this.init(this.canvasWidth, this.canvasHeight);
       }
       return;
+    }
+
+    // M キーでミュートトグル（プレイ中も切替可）
+    if (input.isKeyPressed('KeyM')) {
+      this.sound.toggleMute();
     }
 
     // エネルギーフレーム状態リセット
@@ -186,6 +216,7 @@ export class GameScene extends Scene {
       const skillId = this.energy.activateSkill();
       if (skillId > 0) {
         this.executeSkill(skillId);
+        this.sound.skillActivate();
       }
     }
 
@@ -201,6 +232,12 @@ export class GameScene extends Scene {
     // ボスの攻撃発動を検出して効果を適用
     const activation = this.boss.pollActivation();
     if (activation) this.applyAttack(activation);
+
+    // 怒り状態への遷移を検出して効果音
+    if (this.boss.isEnraged && !this.lastEnraged) {
+      this.sound.enrage();
+    }
+    this.lastEnraged = this.boss.isEnraged;
 
     // 必殺技（チャージ → 自動発射 → 衝突）
     this.updateUltimate(dt);
@@ -318,6 +355,7 @@ export class GameScene extends Scene {
 
   private collectStar(): void {
     this.starsCollected++;
+    this.sound.starGet();
     this.tryActivateUltimate();
   }
 
@@ -332,6 +370,8 @@ export class GameScene extends Scene {
   private startUltimateCharge(): void {
     this.ultPhase = 'charging';
     this.ultChargeTimer = ULT_CHARGE_DURATION;
+    this.ultChargeSound?.stop();
+    this.ultChargeSound = this.sound.ultCharge(ULT_CHARGE_DURATION);
   }
 
   private updateUltimate(dt: number): void {
@@ -358,6 +398,9 @@ export class GameScene extends Scene {
     // 弾の下端がパドル上端から出る形で開始
     this.ultBulletY = this.paddle.y - ULT_BULLET_HEIGHT;
     this.ultBossHit = false;
+    // チャージ音は時間で自然減衰するが、念のためハンドル解放
+    this.ultChargeSound = null;
+    this.sound.ultFire();
   }
 
   /**
@@ -379,6 +422,7 @@ export class GameScene extends Scene {
 
       b.hp = 0;
       b.active = false;
+      this.sound.blockBreak();
       if (b.hasStar) {
         this.stars.push(new StarItem(
           b.x + b.width / 2,
@@ -395,6 +439,7 @@ export class GameScene extends Scene {
       if (overlap) {
         this.boss.damage(ULT_HIT_DAMAGE);
         this.ultBossHit = true;
+        this.sound.bossUltHit();
       }
     }
   }
@@ -432,6 +477,7 @@ export class GameScene extends Scene {
       if (paddleResult.hit && ball.vy > 0) {
         ball.bounceOffPaddle(this.paddle.x, this.paddle.width);
         ball.y -= paddleResult.overlap;
+        this.sound.ballPaddle();
       } else if (ball.vy > 0) {
         // ボール vs ダッシュ残像（実体に当たっていない時だけチェック）
         for (const af of this.paddle.getAfterimageBoxes()) {
@@ -439,6 +485,7 @@ export class GameScene extends Scene {
           if (r.hit) {
             ball.bounceOffPaddle(af.x, af.width);
             ball.y -= r.overlap;
+            this.sound.ballPaddle();
             break;
           }
         }
@@ -451,6 +498,7 @@ export class GameScene extends Scene {
         const bossResult = checkCircleAABB(ball.cx, ball.cy, ball.radius, bossRect);
         if (bossResult.hit) {
           this.boss.damage(BALL_HIT_DAMAGE);
+          this.sound.bossHit();
           // 単純反射（壁と同じ。曲面反射はパドルのみ）
           if (Math.abs(bossResult.nx) > Math.abs(bossResult.ny)) {
             ball.vx = Math.abs(ball.vx) * bossResult.nx;
@@ -471,11 +519,16 @@ export class GameScene extends Scene {
         );
         if (result.hit) {
           block.hit();
-          if (!block.active && block.hasStar) {
-            this.stars.push(new StarItem(
-              block.x + block.width / 2,
-              block.y + block.height / 2,
-            ));
+          if (block.active) {
+            this.sound.ballBlock();
+          } else {
+            this.sound.blockBreak();
+            if (block.hasStar) {
+              this.stars.push(new StarItem(
+                block.x + block.width / 2,
+                block.y + block.height / 2,
+              ));
+            }
           }
           if (Math.abs(result.nx) > Math.abs(result.ny)) {
             ball.vx = Math.abs(ball.vx) * result.nx;
@@ -498,6 +551,7 @@ export class GameScene extends Scene {
           ball.vy = -Math.abs(ball.vy);
           ball.x += r.nx * r.overlap;
           ball.y += r.ny * r.overlap;
+          this.sound.barrierBreak();
           break;
         }
       }

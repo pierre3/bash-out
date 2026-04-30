@@ -1,6 +1,7 @@
 import { Scene } from '../engine/Scene';
 import type { Renderer } from '../engine/Renderer';
 import type { Input } from '../engine/Input';
+import type { SoundEngine } from '../engine/SoundEngine';
 
 const FADE_DURATION = 0.35;
 
@@ -29,9 +30,11 @@ export class TitleScene extends Scene {
   private fadeTimer = 0;
   private bricks: BgBrick[] = [];
   private readonly onStart: () => void;
+  private readonly sound: SoundEngine;
 
-  constructor(onStart: () => void) {
+  constructor(sound: SoundEngine, onStart: () => void) {
     super();
+    this.sound = sound;
     this.onStart = onStart;
     this.spawnBgBricks();
   }
@@ -63,6 +66,12 @@ export class TitleScene extends Scene {
     this.animTime += dt;
     this.updateBricks(dt);
 
+    // M キーでミュートトグル（タイトル中も切替可）
+    if (input.isKeyPressed('KeyM')) {
+      this.sound.ensureStarted();
+      this.sound.toggleMute();
+    }
+
     if (this.fadingOut) {
       this.fadeTimer -= dt;
       if (this.fadeTimer <= 0) this.onStart();
@@ -76,6 +85,8 @@ export class TitleScene extends Scene {
       || input.isKeyPressed('ArrowRight');
     const anyTap = input.hasFreshPointerDown();
     if (anyKey || anyTap) {
+      // 初回ユーザー操作で AudioContext を起動
+      this.sound.ensureStarted();
       this.fadingOut = true;
       this.fadeTimer = FADE_DURATION;
     }
@@ -230,9 +241,9 @@ export class TitleScene extends Scene {
 
   private drawInstructions(ctx: CanvasRenderingContext2D, W: number, H: number): void {
     const panelX = 40;
-    const panelY = H * 0.48;
+    const panelY = H * 0.46;
     const panelW = W - 80;
-    const panelH = 240;
+    const panelH = 268;
 
     // パネル背景
     ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
@@ -270,6 +281,7 @@ export class TitleScene extends Scene {
       ['チャージ', '左右 同時押し'],
       ['基本技',   '↑キー  /  吹き出しをタップ'],
       ['必殺技',   '★を 3つ集めると自動発動'],
+      ['ミュート', 'M キー で 切替'],
     ];
     let y = panelY + 76;
     const labelX = panelX + 28;
