@@ -273,26 +273,29 @@ export class Boss {
 
   /**
    * ボスエリアの背景パネル。本体描画より先（一番下のレイヤ）で呼ぶ。
-   * 暖色の放射グラデーションでボス陣地らしさを出す。
+   * 通常: 暖色の放射グラデでボス陣地感。
+   * 怒り中: 赤く変色＆脈動して危険ゾーン化。
    */
   drawBackdrop(renderer: Renderer): void {
     if (this.bossW === 0) return;
     const ctx = renderer.ctx;
     const cx = this.bossX + this.bossW / 2;
     const cy = this.bossY + this.bossH / 2;
-    const radius = Math.max(this.bossW, this.bossH) * 0.85;
+    const radius = Math.max(this.bossW, this.bossH) * (this.enraged ? 1.05 : 0.85);
 
     const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
-    grad.addColorStop(0, 'rgba(110, 75, 50, 0.55)');
-    grad.addColorStop(0.55, 'rgba(70, 45, 30, 0.30)');
-    grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    if (this.enraged) {
+      const pulse = 0.85 + Math.sin(this.idleTime * 6) * 0.15;
+      grad.addColorStop(0, `rgba(180, 40, 40, ${(0.70 * pulse).toFixed(3)})`);
+      grad.addColorStop(0.45, `rgba(110, 25, 25, ${(0.42 * pulse).toFixed(3)})`);
+      grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    } else {
+      grad.addColorStop(0, 'rgba(110, 75, 50, 0.55)');
+      grad.addColorStop(0.55, 'rgba(70, 45, 30, 0.30)');
+      grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    }
     ctx.fillStyle = grad;
-    ctx.fillRect(
-      cx - radius,
-      cy - radius,
-      radius * 2,
-      radius * 2,
-    );
+    ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
   }
 
   draw(renderer: Renderer): void {
@@ -340,12 +343,26 @@ export class Boss {
       ctx.restore();
     }
 
-    // 枠線
-    ctx.strokeStyle = '#aa6666';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.roundRect(x, y, w, h, r);
-    ctx.stroke();
+    // 怒り中はバー全体を赤い脈動グローで縁取る（危険信号）
+    if (this.enraged) {
+      const pulse = 0.65 + Math.sin(this.idleTime * 7) * 0.35;
+      ctx.save();
+      ctx.shadowColor = '#ff4040';
+      ctx.shadowBlur = 10 * pulse;
+      ctx.strokeStyle = `rgba(255, 70, 70, ${(0.85 * pulse).toFixed(3)})`;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.roundRect(x, y, w, h, r);
+      ctx.stroke();
+      ctx.restore();
+    } else {
+      // 通常時の枠線
+      ctx.strokeStyle = '#aa6666';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(x, y, w, h, r);
+      ctx.stroke();
+    }
 
     // HP数値
     ctx.fillStyle = '#fff';
@@ -481,10 +498,13 @@ export class Boss {
     const bounceSpeed = this.enraged ? 3.5 : 2.2;
     const bounceAmp = this.enraged ? 2.5 : 1.5;
     const idleBounce = Math.sin(this.idleTime * bounceSpeed) * bounceAmp;
+    // 怒り中の小刻みな震え（怒気で抑えきれない感）
+    const trembleX = this.enraged ? Math.sin(this.idleTime * 53) * 0.9 : 0;
+    const trembleY = this.enraged ? Math.sin(this.idleTime * 47 + 1.2) * 0.7 : 0;
     const slamOffsetY = this.computeSlamOffsetY();
     const slamScale = this.computeSlamScale();
-    const cx = this.bossX + this.bossW / 2 + recoilX;
-    const cy = this.bossY + this.bossH / 2 + idleBounce + slamOffsetY;
+    const cx = this.bossX + this.bossW / 2 + recoilX + trembleX;
+    const cy = this.bossY + this.bossH / 2 + idleBounce + slamOffsetY + trembleY;
     const w = this.bossW;
     const h = this.bossH;
     const bodyScale = this.computeBodyScale();
@@ -546,35 +566,105 @@ export class Boss {
       ctx.restore();
     }
 
-    // 怒り突入時の赤バースト（一度きり）
+    // 怒り突入時の赤バースト + 同心円波紋（一度きり）
     if (this.rageActivationTimer > 0) {
       const t = this.rageActivationTimer / RAGE_ACTIVATION_FLASH; // 1→0
-      // 全身に赤オーバーレイ + 外側に放射
+      const progress = 1 - t; // 0→1（経過進行度）
+
+      // 全身に赤オーバーレイ
       ctx.save();
       ctx.globalCompositeOperation = 'source-atop';
       ctx.fillStyle = `rgba(255, 60, 60, ${(t * 0.7).toFixed(3)})`;
       ctx.fillRect(this.bossX - 10, this.bossY - 10, this.bossW + 20, this.bossH + 20);
       ctx.restore();
 
-      const burstRadius = w * (0.4 + (1 - t) * 0.6);
-      const grad = ctx.createRadialGradient(cx, cy, w * 0.2, cx, cy, burstRadius);
-      grad.addColorStop(0, `rgba(255, 80, 80, ${(t * 0.45).toFixed(3)})`);
-      grad.addColorStop(1, 'rgba(255, 80, 80, 0)');
-      ctx.fillStyle = grad;
+      // 外側に放射する明るいバースト
+      const burstRadius = w * (0.4 + progress * 0.6);
+      const burstGrad = ctx.createRadialGradient(cx, cy, w * 0.2, cx, cy, burstRadius);
+      burstGrad.addColorStop(0, `rgba(255, 100, 100, ${(t * 0.50).toFixed(3)})`);
+      burstGrad.addColorStop(1, 'rgba(255, 80, 80, 0)');
+      ctx.fillStyle = burstGrad;
       ctx.fillRect(cx - burstRadius, cy - burstRadius, burstRadius * 2, burstRadius * 2);
+
+      // 同心円の衝撃波（3本、時間差で広がる）
+      for (let i = 0; i < 3; i++) {
+        const ringStart = i * 0.18;
+        const ringP = (progress - ringStart) / (1 - ringStart);
+        if (ringP <= 0 || ringP >= 1) continue;
+        const ringR = ringP * w * 1.6;
+        const ringAlpha = (1 - ringP) * 0.75;
+        ctx.strokeStyle = `rgba(255, 90, 90, ${ringAlpha.toFixed(3)})`;
+        ctx.lineWidth = 4 * (1 - ringP * 0.5);
+        ctx.beginPath();
+        ctx.arc(cx, cy, ringR, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+
+    // 怒り中は常時の炎エンバー（小さい赤橙の粒子が立ち上る）
+    this.drawEnragedEmbers(ctx, cx, cy, w, h);
+  }
+
+  /** 怒り中のみ表示される炎の粒子（決定論的に位置を計算） */
+  private drawEnragedEmbers(
+    ctx: CanvasRenderingContext2D,
+    cx: number,
+    cy: number,
+    w: number,
+    h: number,
+  ): void {
+    if (!this.enraged) return;
+    const emberCount = 14;
+    for (let i = 0; i < emberCount; i++) {
+      // 各粒子のサイクル位相（0=新規生成、1=消失）
+      const phase = ((this.idleTime * 0.55) + i / emberCount) % 1;
+      // 粒子のベース位置（ボス足元あたりからスタート）
+      const baseSpread = (i / emberCount - 0.5) * w * 0.85;
+      const wobble = Math.sin(phase * 5 + i * 1.3) * (w * 0.04);
+      const ex = cx + baseSpread + wobble;
+      const ey = cy + h * 0.30 - phase * h * 1.05; // 上方向に移動
+      const alpha = (1 - phase) * 0.85;
+      const radius = 1.5 + (1 - phase) * 2.5;
+
+      // 色: 始点は明るい黄橙、終点付近で赤に
+      const r = 255;
+      const g = (180 - phase * 130) | 0;
+      const b = (60 - phase * 50) | 0;
+      ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(3)})`;
+      ctx.beginPath();
+      ctx.arc(ex, ey, radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      // 周囲のソフトな光
+      ctx.fillStyle = `rgba(${r}, ${(g + 30) | 0}, ${b}, ${(alpha * 0.25).toFixed(3)})`;
+      ctx.beginPath();
+      ctx.arc(ex, ey, radius * 2.4, 0, Math.PI * 2);
+      ctx.fill();
     }
   }
 
   /** 攻撃予兆中の全身オーラ（雷=黄、reinforce=赤）+ 怒り中の常時赤オーラ */
   private drawAttackAura(ctx: CanvasRenderingContext2D, cx: number, cy: number, w: number, _h: number): void {
-    // 怒り中は常時の赤い薄オーラ（攻撃中でなくても出る）
+    // 怒り中は常時の派手な赤オーラ（外側の炎風グラデ＋内側の濃いコア）
     if (this.enraged) {
       const pulse = 0.85 + Math.sin(this.idleTime * 4) * 0.15;
-      const grad = ctx.createRadialGradient(cx, cy, w * 0.18, cx, cy, w * 0.62);
-      grad.addColorStop(0, `rgba(255, 60, 60, ${(0.18 * pulse).toFixed(3)})`);
-      grad.addColorStop(1, 'rgba(255, 60, 60, 0)');
-      ctx.fillStyle = grad;
-      ctx.fillRect(this.bossX - 40, this.bossY - 40, this.bossW + 80, this.bossH + 80);
+      // 外側の広いオーラ
+      const outerR = w * 0.95;
+      const outerGrad = ctx.createRadialGradient(cx, cy, w * 0.20, cx, cy, outerR);
+      outerGrad.addColorStop(0, `rgba(255, 80, 80, ${(0.40 * pulse).toFixed(3)})`);
+      outerGrad.addColorStop(0.5, `rgba(220, 40, 40, ${(0.22 * pulse).toFixed(3)})`);
+      outerGrad.addColorStop(1, 'rgba(180, 20, 20, 0)');
+      ctx.fillStyle = outerGrad;
+      ctx.fillRect(cx - outerR, cy - outerR, outerR * 2, outerR * 2);
+
+      // 内側の濃いコア（呼吸する）
+      const innerPulse = 0.75 + Math.sin(this.idleTime * 7) * 0.25;
+      const innerR = w * 0.50;
+      const innerGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, innerR);
+      innerGrad.addColorStop(0, `rgba(255, 130, 80, ${(0.35 * innerPulse).toFixed(3)})`);
+      innerGrad.addColorStop(1, 'rgba(255, 80, 60, 0)');
+      ctx.fillStyle = innerGrad;
+      ctx.fillRect(cx - innerR, cy - innerR, innerR * 2, innerR * 2);
     }
 
     if (this.phase === 'idle') return;
@@ -671,8 +761,13 @@ export class Boss {
   }
 
   private drawBristlySpine(ctx: CanvasRenderingContext2D, cx: number, cy: number, w: number, h: number): void {
-    // 背中の剛毛（ギザギザの帯）— 猪らしさの要
-    ctx.fillStyle = '#1a0e04';
+    // 背中の剛毛（ギザギザの帯）— 猪らしさの要。怒り中は赤く染まり脈動
+    if (this.enraged) {
+      const pulse = 0.7 + Math.sin(this.idleTime * 6) * 0.3;
+      ctx.fillStyle = `rgba(${(180 + 50 * pulse) | 0}, ${(30 + 20 * pulse) | 0}, ${(20 + 10 * pulse) | 0}, 1)`;
+    } else {
+      ctx.fillStyle = '#1a0e04';
+    }
     const spineY = cy - h * 0.22;
     const spikeCount = 7;
     const spineLeft = cx - w * 0.28;
